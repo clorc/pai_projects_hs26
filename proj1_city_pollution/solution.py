@@ -3,6 +3,7 @@ import typing
 from sklearn.gaussian_process.kernels import *
 import numpy as np
 from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 from matplotlib import cm
 
@@ -31,18 +32,8 @@ class Model(object):
         self.rng = np.random.default_rng(seed=0)
 
         # TODO: Add custom initialization for your model here if necessary
-
-    # Don't change the name or the signature of this function
-    def fit_model(self, train_coordinates: np.ndarray, train_pollution_targets: np.ndarray, train_residential_flags: np.ndarray):
-        """
-        Fit your model on the given training data.
-        :param train_coordinates: Training features as a 2d NumPy float array of shape (NUM_SAMPLES, 2)
-        :param train_pollution_targets: Training pollution concentrations as a 1d NumPy float array of shape (NUM_SAMPLES,)
-        :param train_residential_flags: Binary variable denoting whether the 2D training point is in the residential area (1) or not (0)
-        """
-
-        # TODO: Fit your model here
-        pass
+        self.kernel = Matern(nu=2.5) + WhiteKernel() + DotProduct()
+        self.gpr = GaussianProcessRegressor(kernel=self.kernel, normalize_y=True, random_state=0)
 
     # Don't change the name or the signature of this function
     def predict_pollution(self, test_coordinates: np.ndarray, test_residential_flags: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -56,14 +47,24 @@ class Model(object):
         """
 
         # TODO: Use your GP to estimate the posterior mean and stddev for each city_area here
-        gp_mean = np.zeros(test_coordinates.shape[0], dtype=float)
-        gp_std = np.zeros(test_coordinates.shape[0], dtype=float)
+        gp_mean, gp_std = self.gpr.predict(test_coordinates, return_std=True)
 
         # TODO: Use the GP posterior to form your predictions here
-        predictions = gp_mean
+        predictions = gp_mean + gp_std*test_residential_flags
 
         return predictions, gp_mean, gp_std
 
+    # Don't change the name or the signature of this function
+    def fit_model(self, train_coordinates: np.ndarray, train_pollution_targets: np.ndarray, train_residential_flags: np.ndarray):
+        """
+        Fit your model on the given training data.
+        :param train_coordinates: Training features as a 2d NumPy float array of shape (NUM_SAMPLES, 2)
+        :param train_pollution_targets: Training pollution concentrations as a 1d NumPy float array of shape (NUM_SAMPLES,)
+        :param train_residential_flags: Binary variable denoting whether the 2D training point is in the residential area (1) or not (0)
+        """
+
+        self.gpr.fit(train_coordinates, train_pollution_targets)
+        
 # You don't have to change this function
 def calculate_cost(ground_truth: np.ndarray, predictions: np.ndarray, residential_flags: np.ndarray) -> float:
     """
@@ -89,7 +90,7 @@ def calculate_cost(ground_truth: np.ndarray, predictions: np.ndarray, residentia
 
 
 # You don't have to change this function
-def is_inside_circle(coordinate, circle_parameters):
+def check_within_circle(coordinate, circle_parameters):
     """
     Checks if a coordinate is inside a circle.
     :param coordinate: 2D coordinate
@@ -98,8 +99,8 @@ def is_inside_circle(coordinate, circle_parameters):
     """
     return (coordinate[0] - circle_parameters[0])**2 + (coordinate[1] - circle_parameters[1])**2 < circle_parameters[2]**2
 
-# You don't have to change this function
-def determine_residential_flags(grid_coordinates):
+# You don't have to change this function 
+def identify_city_area_flags(grid_coordinates):
     """
     Determines the city_area index for each coordinate in the visualization grid.
     :param grid_coordinates: 2D coordinates of the visualization grid
@@ -121,13 +122,13 @@ def determine_residential_flags(grid_coordinates):
                     [0.09961493, 0.94530153, 0.04755969],
                     [0.88172021, 0.2724369,  0.04483477],
                     [0.9425836,  0.6339977,  0.04979664]])
-
-    residential_flags = np.zeros((grid_coordinates.shape[0],))
+    
+    area_flags = np.zeros((grid_coordinates.shape[0],))
 
     for i,coordinate in enumerate(grid_coordinates):
-        residential_flags[i] = any([is_inside_circle(coordinate, circ) for circ in circles])
+        area_flags[i] = any([check_within_circle(coordinate, circ) for circ in circles])
 
-    return residential_flags
+    return area_flags
 
 # Don't change the name or the signature of this function
 def perform_extended_model_evaluation(model: Model, output_dir: str = '/results'):
@@ -144,10 +145,10 @@ def perform_extended_model_evaluation(model: Model, output_dir: str = '/results'
         np.linspace(0, EVALUATION_GRID_POINTS - 1, num=EVALUATION_GRID_POINTS) / EVALUATION_GRID_POINTS,
     )
     visualization_grid = np.stack((grid_lon.flatten(), grid_lat.flatten()), axis=1)
-    grid_residential_flags = determine_residential_flags(visualization_grid)
-
+    grid_area_flags = identify_city_area_flags(visualization_grid)
+    
     # Obtain predictions, means, and stddevs over the entire map
-    predictions, gp_mean, gp_stddev = model.predict_pollution(visualization_grid, grid_residential_flags)
+    predictions, gp_mean, gp_stddev = model.predict_pollution_concentration(visualization_grid, grid_area_flags)
     predictions = np.reshape(predictions, (EVALUATION_GRID_POINTS, EVALUATION_GRID_POINTS))
     gp_mean = np.reshape(gp_mean, (EVALUATION_GRID_POINTS, EVALUATION_GRID_POINTS))
 
@@ -166,51 +167,55 @@ def perform_extended_model_evaluation(model: Model, output_dir: str = '/results'
 
     plt.show()
 
-# You do not need to change the name or the signature of this function; convenience helper used by main() 
+# Don't change the name or the signature of this function
 def get_city_area_data(train_x: np.ndarray, test_x: np.ndarray) -> typing.Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Extracts the city_area information from the training and test features.
     :param train_x: Training features
     :param test_x: Test features
-    :return: Tuple of (training features' 2D coordinates, training features' city_area information,
-        test features' 2D coordinates, test features' city_area information)
+    :return: Tuple of (training features\' 2D coordinates, training features\' city_area information, test features\' 2D coordinates, test features\' city_area information)
     """
-    train_coordinates = np.zeros((train_x.shape[0], 2), dtype=float)
-    train_residential_flags = np.zeros((train_x.shape[0],), dtype=bool)
-    test_coordinates = np.zeros((test_x.shape[0], 2), dtype=float)
-    test_residential_flags = np.zeros((test_x.shape[0],), dtype=bool)
+    train_coordinates = train_x[:,:2]
+    train_area_flags = train_x[:,2]
+    test_coordinates = test_x[:,:2]
+    test_area_flags = test_x[:,2]
 
-    #TODO: Extract the city_area information from the training and test features
-
-    assert train_coordinates.shape[0] == train_residential_flags.shape[0] and test_coordinates.shape[0] == test_residential_flags.shape[0]
+    assert train_coordinates.shape[0] == train_area_flags.shape[0] and test_coordinates.shape[0] == test_area_flags.shape[0]
     assert train_coordinates.shape[1] == 2 and test_coordinates.shape[1] == 2
-    assert train_residential_flags.ndim == 1 and test_residential_flags.ndim == 1
+    assert train_area_flags.ndim == 1 and test_area_flags.ndim == 1
 
-    return train_coordinates, train_residential_flags, test_coordinates, test_residential_flags
+    return train_coordinates, train_area_flags, test_coordinates, test_area_flags
 
 # you don't have to change this function
 def main():
-    # Load the training dataset and test features
-    train_x = np.loadtxt('train_x.csv', delimiter=',', skiprows=1)
-    train_y = np.loadtxt('train_y.csv', delimiter=',', skiprows=1)
+    # Load the training dateset and test features
+    train_x_full = np.loadtxt('train_x.csv', delimiter=',', skiprows=1)
+    train_y_full = np.loadtxt('train_y.csv', delimiter=',', skiprows=1)
     test_x = np.loadtxt('test_x.csv', delimiter=',', skiprows=1)
 
+    subsample_x, _, subsample_y, _ = train_test_split(train_x_full, train_y_full, test_size=.99, random_state=0)
+    train_x, val_x, train_y, val_y = train_test_split(subsample_x, subsample_y, test_size=0.05, random_state=0)
+    # train_x, val_x, train_y, val_y = train_test_split(train_x_full, train_y_full, test_size=0.05, random_state=0)
+    
     # Extract the city_area information
-    train_coordinates, train_residential_flags, test_coordinates, test_residential_flags = get_city_area_data(train_x, test_x)
-
+    train_coordinates, train_area_flags, test_coordinates, test_area_flags = get_city_area_data(train_x, val_x)
+    
     # Fit the model
     print('Training model')
     model = Model()
-    model.fit_model(train_coordinates, train_y, train_residential_flags)
+    model.fit_model_on_training_data(train_y, train_coordinates, train_area_flags)
 
     # Predict on the test features
     print('Predicting on test features')
-    predictions = model.predict_pollution(test_coordinates, test_residential_flags)
-    print(predictions)
+    predictions = model.predict_pollution_concentration(test_coordinates, test_area_flags)[0]
+    # print(predictions)
+
+    cost = calculate_cost(ground_truth=val_y, predictions=predictions, area_flags=test_area_flags)
+    print(cost)
 
     if EXTENDED_EVALUATION:
         perform_extended_model_evaluation(model, output_dir='.')
-
+    pass
 
 if __name__ == "__main__":
     main()
