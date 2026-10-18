@@ -1,0 +1,5 @@
+pyarmor==6.3.3
+cryptography==39.0
+torch==2.4.1
+gymnasium==0.29.1
+gymnasium[other]
