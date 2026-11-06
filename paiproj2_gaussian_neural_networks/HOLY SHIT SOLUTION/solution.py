@@ -95,12 +95,10 @@ class SWAInferenceHandler(object):
         train_xs: torch.Tensor,
         model_dir: pathlib.Path,
         inference_mode: InferenceMode = InferenceMode.SWAG_FULL, # Set to Full SWAG
-        # --- REVERTED ---
-        # Back to the 30/15/30 setup from your 0.891 and 0.917 files
         swag_training_epochs: int = 30,
         swag_lr: float = 0.043,
         swag_update_interval: int = 1,
-        max_rank_deviation_matrix: int = 15, # Reverted
+        max_rank_deviation_matrix: int = 15,
         num_bma_samples: int = 30,
     ):
         """
@@ -316,9 +314,6 @@ class SWAInferenceHandler(object):
         """
         Perform Bayesian model averaging using your SWAG statistics and predict
         probabilities for all samples in the loader.
-        
-        --- CHANGED ---
-        Now applies self.temperature before the softmax.
         """
 
         self.network.eval()
@@ -331,8 +326,6 @@ class SWAInferenceHandler(object):
             with torch.no_grad():
                 for (batch_images,) in loader:
                     logits = self.network(batch_images)
-                    # --- CHANGED ---
-                    # Apply temperature scaling before softmax
                     probs = torch.softmax(logits / self.temperature, dim=-1)
                     sample_predictions.append(probs)
             
