@@ -217,19 +217,19 @@ class SWAInferenceHandler:
         # This cutoff is fitted on mean logits. Deployment still averages probabilities.
         mean_logits = torch.stack(draws).mean(dim=0)
         labeled = labels != -1
-        temperature = torch.nn.Parameter(torch.tensor(1.5))
-        optimizer = torch.optim.LBFGS([temperature], lr=0.01, max_iter=100)
+        log_temperature = torch.nn.Parameter(torch.tensor(0.0))
+        optimizer = torch.optim.LBFGS([log_temperature], lr=0.01, max_iter=100)
         nll = torch.nn.CrossEntropyLoss()
         labeled_logits, targets = mean_logits[labeled], labels[labeled]
 
         def closure():
             optimizer.zero_grad()
-            loss = nll(labeled_logits / temperature.clamp(min=0.01), targets)
+            loss = nll(labeled_logits / log_temperature.exp(), targets)
             loss.backward()
             return loss
 
         optimizer.step(closure)
-        self.temperature = temperature.detach().clamp(min=0.01).item()
+        self.temperature = log_temperature.detach().exp().item()
         confidence, classes = (mean_logits / self.temperature).softmax(dim=-1).max(dim=-1)
         thresholds = torch.cat((torch.tensor([0.0]), confidence.unique(sorted=True), torch.tensor([1.01])))
         costs = [
