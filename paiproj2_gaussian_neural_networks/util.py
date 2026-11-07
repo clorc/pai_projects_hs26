@@ -1,10 +1,8 @@
-import os
 import random
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.backends.cudnn
 
 
 def compute_ece(predicted_probabilities: np.ndarray, labels: np.ndarray, n_bins: int = 30) -> float:
@@ -184,9 +182,4 @@ def seed_setup() -> None:
     np.random.seed(seed)
     random.seed(seed)
 
-    # You do not need to use a GPU, and the code is only tested on CPU.
-    # However, if you still use CUDA, the following code makes execution deterministic.
-    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     torch.use_deterministic_algorithms(True)
-    os.environ["TF_CUDNN_DETERMINISTIC"] = "1"
-    torch.backends.cudnn.benchmark = False

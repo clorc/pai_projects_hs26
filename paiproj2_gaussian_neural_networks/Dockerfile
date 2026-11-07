@@ -1,18 +1,15 @@
-FROM pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime AS gpu
-RUN python -m pip install --no-cache-dir "numpy<2" tqdm matplotlib scikit-learn
-ENV PAI_DEVICE=cuda CUBLAS_WORKSPACE_CONFIG=:4096:8
-WORKDIR /results
-CMD ["python", "-u", "solution.py"]
-
-FROM mambaorg/micromamba:latest AS checker
+FROM mambaorg/micromamba:latest@sha256:e1476182cd40eb1f7c0cfae4adec9bfd78f3d7f05c61368306abfdc8939c1198 AS checker
 COPY env.yaml /tmp/env.yaml
 RUN micromamba install -y -n base -f /tmp/env.yaml && \
     micromamba clean --all --yes
-ARG MAMBA_DOCKERFILE_ACTIVATE=1  # (otherwise python will not be found)
-RUN pip install pyarmor==6.7.4 torch==2.0.1 scikit-learn==1.3.0
+ARG MAMBA_DOCKERFILE_ACTIVATE=1
+RUN python -m pip install --no-cache-dir pyarmor==6.7.4 && \
+    python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu torch==2.0.1
+
 WORKDIR /code
-ADD * /code/
-ADD pytransform /code/pytransform
-ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/code/pytransform
-WORKDIR /code
-CMD python -u checker_client.py
+COPY pytransform /code/pytransform
+COPY checker_client.py map_weights.pt *.npz test_ys.bytes /code/
+ENV LD_LIBRARY_PATH=/code/pytransform
+ENV OMP_NUM_THREADS=3 MKL_NUM_THREADS=3
+COPY util.py solution.py /code/
+CMD ["python", "-u", "checker_client.py"]
