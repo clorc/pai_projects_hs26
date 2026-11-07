@@ -66,7 +66,6 @@ class InferenceMode(enum.Enum):
     SWAG_DIAGONAL = 1
     SWAG_FULL = 2
 
-
 class SWAInferenceHandler:
     """Fit and sample the SWAG approximation, then calibrate its predictions."""
 
