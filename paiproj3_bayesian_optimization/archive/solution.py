@@ -70,7 +70,6 @@ class BO_algo():
 
         self.step_count = 0
 
-
     def next_recommendation(self):
         """
         Recommend the next input to sample.

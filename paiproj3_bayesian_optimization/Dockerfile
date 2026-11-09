@@ -1,12 +1,8 @@
-FROM mambaorg/micromamba:latest
-RUN micromamba install -y -n base python=3.8.5 -c conda-forge && \
-    micromamba clean --all --yes
-ARG MAMBA_DOCKERFILE_ACTIVATE=1  # (otherwise python will not be found)
-RUN pip install pyarmor==6.7.4 scipy==1.7 cryptography==39.* \
-scikit-learn==1.3.* matplotlib==3.4.*
+FROM python:3.10-slim-bookworm
+COPY --from=ghcr.io/astral-sh/uv:0.9.5 /uv /bin/uv
 WORKDIR /code
-ADD * /code/
-ADD pytransform /code/pytransform
-ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/code/pytransform
-WORKDIR /code
+# Before the rest of the handout, so editing solution.py does not reinstall.
+COPY requirements.txt /code/requirements.txt
+RUN uv pip install --system --no-cache -r requirements.txt
+COPY . /code/
 CMD python -u checker_client.py
