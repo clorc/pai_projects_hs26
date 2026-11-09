@@ -21,34 +21,42 @@ class SafeBOAgent:
         self.recommended_points = np.zeros(0)
 
         self.confidence_width_scale = 3.0
-        self.safety_confidence_scale = 3.0
-        self.safety_margin = 0.001
+        self.safety_confidence_scale = 4.0
+        self.safety_margin = 0.02
         self.constraint_prior_mean = MAX_SAFE_SA
         self.min_points_for_kernel_fit = 4
         self.candidate_grid = np.linspace(*SEARCH_BOUNDS[0], 2001)
+
+        self.exploration_probability = 0.2
+        self.policy_rng = np.random.default_rng(0)
+        # Reference signal variances put the two outputs on comparable scales.
+        self.uncertainty_variance_f = 0.5
+        self.uncertainty_variance_v = np.sqrt(2.0)
+        self.last_selection_mode = None
 
         self.noise_f = 0.15**2
         self.noise_v = 0.0001**2
 
         self.matern_nu_f = 2.5
-        self.matern_nu_v = np.inf
+        # RBF interpolation was overconfident on the rougher constraint cases.
+        self.matern_nu_v = 2.5
         self.matern_length_f = 1
         self.matern_length_v = 0.5
 
         self.delta = 0.05
 
         # These are starting bounds to validate, not task-provided guarantees.
-        self.kernel_f = ConstantKernel(0.5, (0.05, 5.0)) * Matern(
+        self.kernel_f = ConstantKernel(self.uncertainty_variance_f, (0.05, 5.0)) * Matern(
             nu=self.matern_nu_f,
             length_scale=self.matern_length_f,
             length_scale_bounds="fixed",
         )
         self.kernel_v = DotProduct(sigma_0_bounds="fixed") + ConstantKernel(
-            np.sqrt(2.0), (0.1, 10.0)
+            self.uncertainty_variance_v, (0.1, 10.0)
         ) * Matern(
             nu=self.matern_nu_v,
             length_scale=self.matern_length_v,
-            length_scale_bounds=(0.5, 10.0),
+            length_scale_bounds=(0.1, 10.0),
         )
 
         self.gpr_estim_f = GaussianProcessRegressor(
@@ -123,8 +131,32 @@ class SafeBOAgent:
             right += 1
         scores[:left] = -np.inf
         scores[right + 1:] = -np.inf
+
+        if not 0.0 <= self.exploration_probability <= 1.0:
+            raise ValueError("exploration_probability must be between 0 and 1.")
+        if self.policy_rng.random() < self.exploration_probability:
+            # Apply exactly the same admissible set to exploration as to UCB.
+            admissible = np.isfinite(scores)
+            scores = np.where(admissible, self.uncertainty_function(candidates), -np.inf)
+            self.last_selection_mode = "uncertainty"
+        else:
+            self.last_selection_mode = "ucb"
         best_idx = int(np.argmax(scores))
         return candidates[best_idx:best_idx + 1].copy()
+
+    def uncertainty_function(self, candidates: np.ndarray) -> np.ndarray:
+        """Combined latent posterior variance, normalized by reference variances.
+
+        The outputs use different units; adding raw uncertainties would make
+        their relative influence depend on those units. Observation-noise
+        variance is excluded because it cannot be reduced by exploration.
+        """
+        _, f_std = self.gpr_estim_f.predict(candidates, return_std=True)
+        _, v_std = self._predict_safety(candidates)
+        return (
+            f_std ** 2 / self.uncertainty_variance_f
+            + v_std ** 2 / self.uncertainty_variance_v
+        )
 
     def acquisition_function(self, candidates: np.ndarray) -> np.ndarray:
         """Objective UCB, with uncertified candidates excluded."""

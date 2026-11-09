@@ -18,6 +18,8 @@ knowledge of this synthetic function, not by the acquisition function.
 In addition to the before/after error comparison, diagnostics_before.png and
 diagnostics_after.png show the objective, constraint, acquisition, and the
 next query chosen by the fitted agent. The next query is not observed.
+Use --exploration-probability 1 to preview a maximum-uncertainty query, or
+--exploration-probability 0 to preview the UCB query on the same data.
 """
 
 import argparse
@@ -78,9 +80,35 @@ def save_figure(fig, path):
     plt.close(fig)
 
 
-def evaluate(training, grid):
+def shade_safety_regions(ax, x, true_v, certified):
+    """Shade unsafe x intervals over the full axes height, behind the curves.
+
+    Red means truly unsafe; purple means not certified despite true safety.
+    Sampled mask boundaries are approximated by neighboring grid midpoints.
+    """
+    truly_unsafe = np.asarray(true_v) >= MAX_SAFE_SA
+    uncertified_safe = ~np.asarray(certified, dtype=bool) & ~truly_unsafe
+    for mask, color, label in (
+        (truly_unsafe, "#cf4056", "Truly unsafe: SA >= 4"),
+        (uncertified_safe, "#8060b0", "GP rejects, but truly safe"),
+    ):
+        transitions = np.diff(np.r_[False, mask, False].astype(int))
+        starts = np.flatnonzero(transitions == 1)
+        stops = np.flatnonzero(transitions == -1)
+        for region, (start, stop) in enumerate(zip(starts, stops)):
+            left = x[0] if start == 0 else 0.5 * (x[start - 1] + x[start])
+            right = x[-1] if stop == len(x) else 0.5 * (x[stop - 1] + x[stop])
+            ax.axvspan(left, right, color=color, alpha=0.16, linewidth=0,
+                       zorder=-2, label=label if region == 0 else "_nolegend_")
+
+
+def evaluate(training, grid, exploration_probability=None, policy_seed=None):
     """Evaluate latent-function accuracy on inputs absent from the training set."""
     agent = SafeBOAgent()
+    if exploration_probability is not None:
+        agent.exploration_probability = exploration_probability
+    if policy_seed is not None:
+        agent.policy_rng = np.random.default_rng(policy_seed)
     for x, yf, yv in training:
         agent.observe(np.array([[x]]), yf, yv)
     with warnings.catch_warnings(record=True) as caught:
@@ -139,6 +167,9 @@ def evaluate(training, grid):
         "objective_confidence_scale": agent.confidence_width_scale,
         "safety_confidence_scale": agent.safety_confidence_scale,
         "safety_margin": agent.safety_margin,
+        "exploration_probability": agent.exploration_probability,
+        "next_query_selection_mode": agent.last_selection_mode,
+        "next_query_total_uncertainty": float(agent.uncertainty_function(next_point).item()),
         "next_query_x": float(next_point.item()),
         "next_query_objective_mean": float(next_f_mean.item()),
         "next_query_objective_ucb": float(
@@ -170,12 +201,15 @@ def plot_diagnostics(path, training, grid, agent, metrics, title):
     v_width = agent.safety_confidence_scale * v_std
     objective_ucb = f_mean + f_width
     acquisition = agent.acquisition_function(candidates)
+    uncertainty = agent.uncertainty_function(candidates)
     certified = np.isfinite(acquisition)
     query_x = metrics["next_query_x"]
+    selection_mode = metrics["next_query_selection_mode"]
 
     fig, axes = plt.subplots(1, 3, figsize=(19, 6))
     for ax in axes:
-        ax.axvspan(*UNOBSERVED_INTERVAL, color="#f0b44d", alpha=0.12)
+        ax.axvspan(*UNOBSERVED_INTERVAL, color="#f0b44d", alpha=0.12, zorder=-3)
+        shade_safety_regions(ax, x, true_safety(x), certified)
         ax.axvline(query_x, color="#9c2462", linestyle=":", alpha=0.8)
         ax.set_xlim(*SEARCH_BOUNDS[0])
         ax.set_xlabel("Structural parameter x")
@@ -215,44 +249,59 @@ def plot_diagnostics(path, training, grid, agent, metrics, title):
     ax.legend(fontsize=8)
 
     ax = axes[2]
-    ax.set_title("Acquisition and next query")
+    ax.set_title(f"Next-query policy: {selection_mode.upper()}")
     ax.plot(x, objective_ucb, color="#777777", linestyle="--", label="Objective UCB")
     # Rejected values are -inf; plot them as gaps rather than finite scores.
     ax.plot(x, np.where(certified, acquisition, np.nan), color="#2864be",
             linewidth=2, label="Pointwise safe acquisition")
-    ax.fill_between(x, 0, 1, where=~certified, transform=ax.get_xaxis_transform(),
-                    color="#b92f3c", alpha=0.1, label="Rejected by safety filter")
-    ax.scatter([query_x], [metrics["next_query_objective_ucb"]], marker="*",
+    uncertainty_ax = ax.twinx()
+    uncertainty_ax.plot(x, np.where(certified, uncertainty, np.nan), color="#bc791c",
+                        linestyle=":", linewidth=2, label="Total normalized uncertainty")
+    uncertainty_ax.set_ylabel("Normalized posterior variance", color="#bc791c")
+    uncertainty_ax.tick_params(axis="y", colors="#bc791c")
+    marker_ax = uncertainty_ax if selection_mode == "uncertainty" else ax
+    marker_y = (metrics["next_query_total_uncertainty"] if selection_mode == "uncertainty"
+                else metrics["next_query_objective_ucb"])
+    marker_ax.scatter([query_x], [marker_y], marker="*",
                s=170, color="#9c2462", zorder=5, label=f"Actual next query: {query_x:.3f}")
     ax.set_ylabel("Acquisition score")
     if not metrics["next_query_passes_pointwise_filter"]:
         ax.text(0.5, 0.02, "Trusted initial safe point used as fallback",
                 transform=ax.transAxes, ha="center", fontsize=9)
-    ax.legend(fontsize=8)
+    handles, labels = ax.get_legend_handles_labels()
+    other_handles, other_labels = uncertainty_ax.get_legend_handles_labels()
+    ax.legend(handles + other_handles, labels + other_labels, fontsize=8)
 
     fig.suptitle(f"{title} ({len(training)} observations)", fontsize=14)
     fig.text(0.5, 0.025,
              "Stars mark predictions at the next query; no new observation is added. "
              "Selection also applies the seed-connectivity filter.\n"
-             f"Orange shading: original sampling gap. Safety margin: {agent.safety_margin:g}.",
+             "Red: truly unsafe. Purple: GP rejects truly safe points. Orange: original sampling gap. "
+             f"Safety margin: {agent.safety_margin:g}.",
              ha="center", fontsize=9)
     fig.tight_layout(rect=(0, 0.10, 1, 0.93))
     save_figure(fig, path)
 
 
-def plot_comparison(path, training, augmented, before, after):
+def plot_comparison(path, training, augmented, before, after, before_metrics, after_metrics):
     fig, axes = plt.subplots(3, 2, figsize=(14, 11), sharex=True)
     error_limit = 1.05 * max(
         max(np.max(np.abs(p[:, 1] - p[:, 2])), np.max(3 * p[:, 3]))
         for p in (before, after)
     )
-    for column, (data, predictions, title) in enumerate((
-        (training, before, "Before: 11 observations, no samples near the high peak"),
-        (augmented, after, "After: three extra observations near the high peak"),
+    for column, (data, predictions, metrics, title) in enumerate((
+        (training, before, before_metrics, "Before: 11 observations, no samples near the high peak"),
+        (augmented, after, after_metrics, "After: three extra observations near the high peak"),
     )):
         x, f_true, f_mean, f_std, v_true, v_mean, v_std = predictions.T
+        certified = (
+            v_mean + metrics["safety_confidence_scale"] * v_std
+            < MAX_SAFE_SA - metrics["safety_margin"]
+        )
         for row in range(3):
-            axes[row, column].axvspan(*UNOBSERVED_INTERVAL, color="#f0b44d", alpha=0.12)
+            axes[row, column].axvspan(*UNOBSERVED_INTERVAL, color="#f0b44d", alpha=0.12,
+                                        zorder=-3)
+            shade_safety_regions(axes[row, column], x, v_true, certified)
             axes[row, column].grid(alpha=0.2)
             axes[row, column].set_xlim(*SEARCH_BOUNDS[0])
 
@@ -291,7 +340,8 @@ def plot_comparison(path, training, augmented, before, after):
 
     fig.suptitle("A smooth hidden peak exposes overconfident objective predictions", fontsize=15)
     fig.text(0.5, 0.015,
-             "Orange shading: original sampling gap. Ground truth is never used to fit either GP.\n"
+             "Red: truly unsafe. Purple: GP rejects truly safe points. Orange: original sampling gap.\n"
+             "Ground truth is never used to fit either GP. "
              "The additional observations are a controlled coverage experiment, not a BO trajectory.",
              ha="center", fontsize=10)
     fig.tight_layout(rect=(0, 0.055, 1, 0.96))
@@ -301,9 +351,15 @@ def plot_comparison(path, training, augmented, before, after):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--exploration-probability", type=float, default=None,
+                        help="Override the agent's policy probability: 0=UCB, 1=uncertainty.")
+    parser.add_argument("--policy-seed", type=int, default=None,
+                        help="Seed the exploration coin flips independently of observation noise.")
     parser.add_argument("--output-dir", type=Path,
                         default=Path(__file__).resolve().parent / "toy_data" / "hidden_peak")
     args = parser.parse_args()
+    if args.exploration_probability is not None and not 0 <= args.exploration_probability <= 1:
+        parser.error("--exploration-probability must be between 0 and 1")
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
 
@@ -317,8 +373,12 @@ def main():
     write_csv(output / "extra_observations.csv", extra, "x,y_objective,y_safety")
     write_csv(output / "reference.csv", reference, "x,true_objective,true_safety")
 
-    before_metrics, before, before_agent = evaluate(training, grid)
-    after_metrics, after, after_agent = evaluate(augmented, grid)
+    before_metrics, before, before_agent = evaluate(
+        training, grid, args.exploration_probability, args.policy_seed
+    )
+    after_metrics, after, after_agent = evaluate(
+        augmented, grid, args.exploration_probability, args.policy_seed
+    )
     prediction_columns = "x,true_objective,predicted_objective,std_objective,true_safety,predicted_safety,std_safety"
     write_csv(output / "predictions_before.csv", before, prediction_columns)
     write_csv(output / "predictions_after.csv", after, prediction_columns)
@@ -328,13 +388,15 @@ def main():
         "sklearn_version": sklearn.__version__,
         "noise_std_objective": NOISE_F_STD,
         "noise_std_safety": NOISE_V_STD,
+        "policy_seed_override": args.policy_seed,
         "original_unobserved_interval": list(UNOBSERVED_INTERVAL),
         "design": "Fixed-design synthetic stress case; not sampled by the BO acquisition.",
         "before": before_metrics,
         "after_extra_observations": after_metrics,
     }
     (output / "metrics.json").write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
-    plot_comparison(output / "diagnostic.png", training, augmented, before, after)
+    plot_comparison(output / "diagnostic.png", training, augmented, before, after,
+                    before_metrics, after_metrics)
     plot_diagnostics(output / "diagnostics_before.png", training, grid,
                      before_agent, before_metrics, "Before extra peak observations")
     plot_diagnostics(output / "diagnostics_after.png", augmented, grid,
@@ -352,10 +414,14 @@ def main():
         print(f"  Objective kernel: {result['objective_kernel']}")
         print(f"  Next query: x={result['next_query_x']:.3f}, "
               f"predicted SA UCB={result['next_query_safety_ucb']:.6f}")
+        print(f"  Selection: {result['next_query_selection_mode']}, "
+              f"exploration probability={result['exploration_probability']:.2f}")
         if result["fit_warnings"]:
             print(f"  Fitting warnings: {len(result['fit_warnings'])}; see metrics.json")
     print(f"Saved dataset, predictions, metrics, diagnostic.png, "
           f"and diagnostics_before/after.png to {output}")
+    print(f"Truly unsafe grid points: {np.count_nonzero(reference[:, 2] >= MAX_SAFE_SA)} "
+          f"/ {len(grid)} (red shading appears only where true SA >= {MAX_SAFE_SA:g}).")
 
 
 if __name__ == "__main__":
