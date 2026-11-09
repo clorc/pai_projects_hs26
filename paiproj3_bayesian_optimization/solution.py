@@ -41,14 +41,14 @@ class SafeBOAgent:
         self.kernel_f = ConstantKernel(0.5, (0.05, 5.0)) * Matern(
             nu=self.matern_nu_f,
             length_scale=self.matern_length_f,
-            length_scale_bounds=(0.1, 20.0),
+            length_scale_bounds="fixed",
         )
         self.kernel_v = DotProduct(sigma_0_bounds="fixed") + ConstantKernel(
             np.sqrt(2.0), (0.1, 10.0)
         ) * Matern(
             nu=self.matern_nu_v,
             length_scale=self.matern_length_v,
-            length_scale_bounds=(0.1, 20.0),
+            length_scale_bounds=(0.5, 10.0),
         )
 
         self.gpr_estim_f = GaussianProcessRegressor(
