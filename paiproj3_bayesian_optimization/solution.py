@@ -1,335 +1,128 @@
-"""Solution."""
+"""Solution template."""
+
 import numpy as np
 from scipy.optimize import fmin_l_bfgs_b
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import Matern, RBF, WhiteKernel, ConstantKernel, DotProduct
-import matplotlib.pyplot as plt
-from scipy.stats import norm
-# import additional ...
 
 
-# global variables
-DOMAIN = np.array([[0, 10]])  # restrict \theta in [0, 10]
-SAFETY_THRESHOLD = 4  # threshold, upper bound of SA
+SEARCH_BOUNDS = np.array([[0.0, 10.0]])
+MAX_SAFE_SA = 4.0
+PLOT_DIAGNOSTICS = False  # Debug only: plot the first trial, then stop.
 
 
-# TODO: implement a self-contained solution in the BO_algo class.
-# NOTE: main() is not called by the checker.
-class BO_algo():
+class SafeBOAgent:
+    """Choose safe queries and return a final point using noisy observations."""
+
     def __init__(self):
-        """Initializes the algorithm with a parameter configuration."""
-        # TODO: Define all relevant class members for your BO algorithm here.
-        self.explored_points = np.zeros((0,3))
-        self.recommended_points = np.zeros(0)
+        # TODO: Set up your models and observation storage.
+        pass
 
-        # Run 1: .780
-        #   beta=2.1, lambda=90.0, lengthscale_f = 0.5
-        #
-        # Run 2: .78503
-        #   beta=2.1, lambda=100.0, lengthscale_f = 1
-        #
-        # Run 3: .7878
-        #   beta=3.0, lambda=100.0, lengthscale_f = 1
-        #
-        # Run 4: .796
-        #   beta=3.0, lambda=120.0, lengthscale_f = 1
-        #
-        # Run 4: .820
-        #   beta=3.0, lambda=140.0, lengthscale_f = 1
-        #
-        # Run 4: .831
-        #   beta=3.0, lambda=150.0, lengthscale_f = 1
-        #
-        # Run 4: .8609
-        #   beta=3.0, lambda=150.0, lengthscale_f = 1
+    def suggest_next(self) -> np.ndarray:
+        """Return the next query as an array of shape (1, 1)."""
+        # TODO: Fit or update your models and choose the next query.
+        # You may use optimize_acquisition() below.
+        raise NotImplementedError
 
-        self.constraint_penalty = 155.0
-        self.confidence_width_scale = 3.0
+    def optimize_acquisition(self, restarts: int = 20) -> np.ndarray:
+        """Maximize acquisition_function() over SEARCH_BOUNDS.
 
-        self.noise_f = np.sqrt(0.15)
-        self.noise_v = np.sqrt(0.0001)
-
-        self.matern_nu_f = 2.5
-        self.matern_nu_v = np.inf
-        self.matern_length_f = 1
-        self.matern_length_v = 10
-
-        self.delta = 0.05
-
-        # self.kernel_f =                ConstantKernel(np.sqrt(0.5))      * Matern(nu=self.matern_nu_f, length_scale_bounds=(1e-10,1e10), length_scale=self.matern_length_f) + WhiteKernel(noise_level=self.noise_f, noise_level_bounds=(1e-10,1e5))
-        # self.kernel_v = DotProduct() + ConstantKernel(np.power(2, 0.25)) * Matern(nu=self.matern_nu_v, length_scale_bounds=(1e-10,1e10), length_scale=self.matern_length_v) + WhiteKernel(noise_level=self.noise_v, noise_level_bounds=(1e-10,1e5))
-
-        self.kernel_f =                ConstantKernel(np.power(0.5, 0.5)) * Matern(nu=self.matern_nu_f, length_scale_bounds=(1e-10,1e10), length_scale=self.matern_length_f)
-        self.kernel_v = DotProduct() + ConstantKernel(np.power(2, 0.25))  * Matern(nu=self.matern_nu_v, length_scale_bounds=(1e-10,1e10), length_scale=self.matern_length_v)
-        
-        # self.kernel_f = ConstantKernel(np.sqrt(0.5))      * RBF(length_scale=.5) + WhiteKernel(noise_level=self.noise_f)
-        # self.kernel_v = ConstantKernel(np.power(2, 0.25)) * RBF(length_scale=10) + WhiteKernel(noise_level=self.noise_v)
-
-        self.gpr_estim_f = GaussianProcessRegressor(n_restarts_optimizer=15,kernel=self.kernel_f,alpha=self.noise_f)
-        self.gpr_estim_v = GaussianProcessRegressor(n_restarts_optimizer=15,kernel=self.kernel_v,alpha=self.noise_v)
-
-        self.step_count = 0
-
-
-    def next_recommendation(self):
+        Returns an array of shape (1, 1). You may modify this helper.
         """
-        Recommend the next input to sample.
+        def objective(candidate):
+            return -self.acquisition_function(np.atleast_2d(candidate)).item()
 
-        Returns
-        -------
-        recommendation: np.ndarray
-            the next point to evaluate
+        candidates = []
+        scores = []
+        for _ in range(restarts):
+            start = SEARCH_BOUNDS[:, 0] + (
+                SEARCH_BOUNDS[:, 1] - SEARCH_BOUNDS[:, 0]
+            ) * np.random.rand(SEARCH_BOUNDS.shape[0])
+            point, negative_score, _ = fmin_l_bfgs_b(
+                objective, x0=start, bounds=SEARCH_BOUNDS, approx_grad=True
+            )
+            candidates.append(np.clip(point, SEARCH_BOUNDS[:, 0], SEARCH_BOUNDS[:, 1]))
+            scores.append(-negative_score)
+
+        return np.atleast_2d(candidates[int(np.argmax(scores))])
+
+    def acquisition_function(self, candidates: np.ndarray) -> np.ndarray:
+        """Score candidate points; accept an array of shape (n, 1)."""
+        # TODO: Define an acquisition score that accounts for the SA constraint.
+        raise NotImplementedError
+
+    def observe(
+        self, point: np.ndarray, objective_value: float, safety_value: float
+    ) -> None:
+        """Record a query and its noisy logP and SA observations."""
+        # TODO: Add this observation to your models or training data.
+        raise NotImplementedError
+
+    def best_safe_point(self) -> np.ndarray:
+        """Return your predicted safe optimum as an array of shape (1, 1)."""
+        # TODO: Choose a point expected to have SA below MAX_SAFE_SA.
+        raise NotImplementedError
+
+    def plot_diagnostics(self, include_recommendation: bool = True) -> None:
+        """Optional plot; called by checker when PLOT_DIAGNOSTICS is True.
+
+        Save plots that you create here under the docker results directory (default is "/results"). Example:
+        ```
+        # plot stuff
+        plt.savefig(f"/results/{filename}.pdf")
+        ```
         """
-        # TODO: Implement the function which recommends the next point to query
-        # using functions f and v.
-        # In implementing this function, you may use
-        # optimize_acquisition_function() defined below.
-
-        if self.explored_points.any():
-            explored_x = self.explored_points[:,0].reshape(-1,1)
-            explored_f = self.explored_points[:,1].reshape(-1,1)
-            explored_v = self.explored_points[:,2].reshape(-1,1)
-
-            self.gpr_estim_f.fit(explored_x, explored_f)
-            self.gpr_estim_v.fit(explored_x, explored_v)
-
-            # next_rec = np.clip(self.optimize_acquisition_function() + np.max([(10-self.step_count), 0.5])*self.noise_f*np.random.randn(), DOMAIN[:, 0], DOMAIN[:, 1])
-            next_rec = self.optimize_acquisition_function()
-
-            self.recommended_points = np.append(self.recommended_points, next_rec)
-
-            self.plot(plot_recommendation=True)
-
-            return self.recommended_points[-1].reshape(1,1)
-        else:
-            return np.array([[0.0]])
-
-    def optimize_acquisition_function(self):
-        """Optimizes the acquisition function defined below (DO NOT MODIFY).
-
-        Returns
-        -------
-        x_opt: float
-            the point that maximizes the acquisition function, where
-            x_opt in range of DOMAIN
-        """
-
-        def objective(x):
-            return -self.acquisition_function(x)
-
-        f_values = []
-        x_values = []
-
-        # Restarts the optimization 20 times and pick the best solution
-        for _ in range(20):
-            x0 = DOMAIN[:, 0] + (DOMAIN[:, 1] - DOMAIN[:, 0]) * \
-                 np.random.rand(DOMAIN.shape[0])
-            result = fmin_l_bfgs_b(objective, x0=x0, bounds=DOMAIN,
-                                   approx_grad=True)
-            x_values.append(np.clip(result[0], *DOMAIN[0]))
-            f_values.append(-result[1])
-
-        ind = np.argmax(f_values)
-        x_opt = x_values[ind].item()
-
-        return x_opt
-
-    def acquisition_function(self, x: np.ndarray):
-        """Compute the acquisition function for x.
-
-        Parameters
-        ----------
-        x: np.ndarray
-            x in domain of f, has shape (N, 1)
-
-        Returns
-        ------
-        af_value: np.ndarray
-            shape (N, 1)
-            Value of the acquisition function at x
-        """
-        x = np.atleast_2d(x)
-        # TODO: Implement the acquisition function you want to optimize.
-        # Acquisition function for GP-UCB
-        f_mean, f_std = self.gpr_estim_f.predict(x, return_std=True)
-        v_mean, v_std = self.gpr_estim_v.predict(x, return_std=True)
-        # v_mean = v_mean_centered + 4.0
-
-        # safe_proba = norm.cdf((SAFETY_THRESHOLD - v_mean)/(v_std + 1e-8))
-
-        v_ucb = v_mean + self.confidence_width_scale*v_std
-        f_ucb = f_mean + self.confidence_width_scale*f_std
-
-        # objective = f_ucb * safe_proba
-
-        # incumbent_x = self.get_solution()
-        # incumbent_f = self.gpr_estim_f.predict(np.array([incumbent_x]).reshape(1,-1))
-        # expected_improvement = np.mean(np.array([np.maximum(f_mean + f_std*np.random.randn(f_mean.shape[0]) - incumbent_f, 0) for _ in range(30)]), axis=0)
-        # print(f'Incumbent solution: {incumbent_f}, f mean: {f_mean}')
-        # print(f_mean + f_std*np.random.randn(f_mean.shape[0]) - incumbent)
-
-        # if np.any(safe_proba >= 1 - self.delta):
-        #     safety_penalty = np.where(v_ucb > SAFETY_THRESHOLD, -1000, 1.0)
-        #     return safe_proba * expected_improvement *safety_penalty
-        # else:
-        #     safety_penalty = np.where(v_ucb > SAFETY_THRESHOLD, -1000, 1.0)
-        #     return safe_proba *safety_penalty
-
-        constraint_violation = np.maximum(v_ucb - SAFETY_THRESHOLD, 0.0)
-        # print(constraint_violation)
-        lagrangian = f_ucb - self.constraint_penalty * constraint_violation
-
-        return lagrangian
-
-    def add_data_point(self, x: float, f: float, v: float):
-        new_point = np.array([[float(x), f, v]])
-        if self.explored_points.size == 0:
-            self.explored_points = new_point
-        else:
-            self.explored_points = np.vstack([self.explored_points, new_point])
-
-    def get_solution(self):
-        # Return the point with highest f that satisfies safety constraint
-        safe_mask = self.explored_points[:, 2] < SAFETY_THRESHOLD
-        
-        if np.any(safe_mask):
-            safe_points = self.explored_points[safe_mask]
-            best_idx = np.argmax(safe_points[:, 1])
-            return safe_points[best_idx, 0]
-        else:
-            # Fallback: return safest point
-            safest_idx = np.argmin(self.explored_points[:, 2])
-            return self.explored_points[safest_idx, 0]
-            # return self.explored_points[0, 0]
-
-    def plot(self, plot_recommendation: bool = True):
-        """Plot objective and constraint posterior for debugging (OPTIONAL).
-
-        Parameters
-        ----------
-        plot_recommendation: bool
-            Plots the recommended point if True.
-        """
-        fig = plt.figure(figsize=(20, 8), dpi=80)
-        (ax1, ax2, ax3) = fig.subplots(1,3)
-
-        x_grid = np.linspace(0,10,200).reshape(-1,1)
-        f_mean, f_std = self.gpr_estim_f.predict(x_grid, return_std=True)
-        v_mean, v_std = self.gpr_estim_v.predict(x_grid, return_std=True)
-        acquisition_func = self.acquisition_function(x_grid)
-
-        ax1.scatter(self.explored_points[:,0], self.explored_points[:,1], c='darkorange', s=100, zorder=5, label='Exploration data')
-        ax1.plot(x_grid, f_mean, 'b-', linewidth=2, label='Mean prediction for f')
-        ax1.fill_between(x_grid.ravel(), 
-            f_mean - self.confidence_width_scale*f_std, 
-            f_mean + self.confidence_width_scale*f_std, 
-            alpha=0.3, 
-            color='navajowhite',
-            label='confidence interval')
-        ax1.set_title("Data Exploration of f")
-        ax1.set_ylim(-10,10)
-
-        ax2.scatter(self.explored_points[:,0], self.explored_points[:,2], c='darkorange', s=100, zorder=5, label='Exploration data')
-        ax2.plot(x_grid, v_mean, 'b-', linewidth=2, label='Mean prediction for v')
-        ax2.fill_between(x_grid.ravel(), 
-            v_mean - self.confidence_width_scale*v_std, 
-            v_mean + self.confidence_width_scale*v_std, 
-            alpha=0.3, 
-            color='navajowhite',
-            label='confidence interval')
-        ax2.set_title("Data Exploration of v")
-        ax2.hlines(4, 0, 10)
-        ax2.set_ylim(-10,10)
-        
-        ax3.plot(x_grid, acquisition_func, 'b-', linewidth=2, label='Mean prediction for v')
-        ax3.set_title("Constrained Acquisition function")
-        # ax3.set_ylim(0,3)
-
-        if plot_recommendation:
-            last_rec = self.recommended_points[-1].reshape(1,-1)
-            rec_mean_f = self.gpr_estim_f.predict(last_rec)
-            rec_mean_v = self.gpr_estim_v.predict(last_rec)
-
-            ax1.scatter(last_rec, rec_mean_f, c='red', s=100, zorder=5, label='Recommended Point')
-            ax2.scatter(last_rec, rec_mean_v, c='red', s=100, zorder=5, label='Recommended Point')
-    
-        # plt.show()
-        # fig.savefig(f"./images/recommendation_graph_{self.step_count}.png", bbox_inches="tight")
-        self.step_count+=1
+        pass
 
 
 # ---
 # TOY PROBLEM. To check your code works as expected (ignored by checker).
 # ---
 
-def check_in_domain(x: float):
-    """Validate input"""
-    x = np.atleast_2d(x)
-    return np.all(x >= DOMAIN[None, :, 0]) and np.all(x <= DOMAIN[None, :, 1])
+def in_search_bounds(point: np.ndarray) -> bool:
+    """Check whether a point is inside the search interval."""
+    point = np.atleast_2d(point)
+    return np.all(point >= SEARCH_BOUNDS[:, 0]) and np.all(point <= SEARCH_BOUNDS[:, 1])
 
 
-def f(x: float):
-    """Dummy logP objective"""
-    mid_point = DOMAIN[:, 0] + 0.5 * (DOMAIN[:, 1] - DOMAIN[:, 0])
-    return - np.linalg.norm(x - mid_point, 2)
+def toy_objective(point: np.ndarray) -> float:
+    """Toy logP objective."""
+    midpoint = SEARCH_BOUNDS[:, 0] + 0.5 * (SEARCH_BOUNDS[:, 1] - SEARCH_BOUNDS[:, 0])
+    return -float(np.linalg.norm(point - midpoint))
 
 
-def v(x: float):
-    """Dummy SA"""
+def toy_safety(point: np.ndarray) -> float:
+    """Toy SA value."""
     return 2.0
 
 
-def get_initial_safe_point():
-    """Return initial safe point"""
-    x_domain = np.linspace(*DOMAIN[0], 4000)[:, None]
-    c_val = np.vectorize(v)(x_domain)
-    x_valid = x_domain[c_val < SAFETY_THRESHOLD]
+def initial_safe_point() -> np.ndarray:
+    """Choose an initial point with toy SA below the threshold."""
+    grid = np.linspace(*SEARCH_BOUNDS[0], 4000)[:, None]
+    safe_grid = grid[np.array([toy_safety(point) < MAX_SAFE_SA for point in grid])]
     np.random.seed(0)
-    np.random.shuffle(x_valid)
-    x_init = x_valid[0]
-
-    return x_init
+    np.random.shuffle(safe_grid)
+    return safe_grid[:1]
 
 
-def main():
-    """FOR ILLUSTRATION / TESTING ONLY (NOT CALLED BY CHECKER)."""
-    # Init problem
-    agent = BO_algo()
+def main() -> None:
+    """Illustration only; the checker does not call this function."""
+    agent = SafeBOAgent()
+    point = initial_safe_point()
+    agent.observe(point, toy_objective(point), toy_safety(point))
 
-    # Add initial safe point
-    x_init = get_initial_safe_point()
-    obj_val = f(x_init)
-    cost_val = v(x_init)
-    agent.add_data_point(x_init, obj_val, cost_val)
+    for _ in range(20):
+        point = agent.suggest_next()
+        assert point.shape == (1, SEARCH_BOUNDS.shape[0]), (
+            f"suggest_next() must return shape (1, {SEARCH_BOUNDS.shape[0]})"
+        )
+        agent.observe(
+            point,
+            toy_objective(point) + np.random.randn() * 0.1,
+            toy_safety(point) + np.random.randn() * 0.01,
+        )
 
-    # Loop until budget is exhausted
-    for j in range(20):
-        # Get next recommendation
-        x = agent.next_recommendation()
-
-
-        # Check for valid shape
-        assert x.shape == (1, DOMAIN.shape[0]), \
-            f"The function next recommendation must return a numpy array of " \
-            f"shape (1, {DOMAIN.shape[0]})"
-
-        # Obtain objective and constraint observation
-        obj_val = f(x) + np.random.randn()
-        cost_val = v(x) + np.random.randn()
-
-        agent.add_data_point(x, obj_val, cost_val)
-
-    # Validate solution
-    solution = agent.get_solution()
-    assert check_in_domain(solution), \
-        f'The function get solution must return a point within the' \
-        f'DOMAIN, {solution} returned instead'
-
-    # Compute regret
-    regret = (0 - f(solution))
-
-    print(f'Optimal value: 0\nProposed solution {solution}\nSolution value '
-          f'{f(solution)}\nRegret {regret}\nUnsafe-evals TODO\n')
+    solution = agent.best_safe_point()
+    assert in_search_bounds(solution), "best_safe_point() returned a point outside the domain"
+    print(f"Proposed solution: {solution}; toy objective: {toy_objective(solution)}")
 
 
 if __name__ == "__main__":
