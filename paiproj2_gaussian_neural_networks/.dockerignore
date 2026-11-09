@@ -1,0 +1,15 @@
+# Only send files needed by the handout checker to Docker.
+*
+!env.yaml
+!checker_client.py
+!pytransform/
+!pytransform/**
+!map_weights.pt
+!train_xs.npz
+!train_ys.npz
+!val_xs.npz
+!val_ys.npz
+!test_xs.npz
+!test_ys.bytes
+!util.py
+!solution.py
